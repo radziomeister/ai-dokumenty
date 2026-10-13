@@ -248,6 +248,7 @@ python3 klient/publikuj.py "Pierwsza wersja"
 | Opublikuj nową wersję agenta | podnieś `klient/WERSJA`, potem `python3 klient/publikuj.py "opis zmiany"` |
 | Faktury testowe | `.venv/bin/python testy/generuj_faktury.py` |
 | Ręczny backup | `bash backup/backup_ollama.sh` |
+| Wyślij do Microsoft 365 faktury, których tam brakuje (np. po awarii) | `python3 n8n/m365_zalegle.py` (podgląd), potem `--wyslij` |
 
 Workflowy **edytuje się w plikach `n8n/kod/*.js`**, nie w edytorze n8n – `wdroz.sh` składa je
 (`zbuduj_workflow.py`), importuje przy zatrzymanym n8n i publikuje. Dzięki temu kod jest w repozytorium,
@@ -304,6 +305,7 @@ ai-dokumenty/
 │   ├── zbuduj_workflow.py    składa workflow_*.json
 │   ├── wdroz.sh              import + publikacja + test po wdrożeniu
 │   ├── klienci.py            zaufane komputery i tokeny
+│   ├── m365_zalegle.py       wysyłka zaległych faktur do Microsoft 365
 │   └── dziennik.py           przegląd dzienników
 ├── klient/                   agent Windows + publikuj.py (wydawanie wersji)
 ├── ocr/                      serwis OCR (Dockerfile + serwer w bibliotece standardowej Pythona)
@@ -329,7 +331,6 @@ ai-dokumenty/
   bez użytkownika z `Sites.Selected` (dostęp nadany tylko do jednej witryny).
 - **Skany** odczytuje lokalny OCR (Tesseract); jakość zależy od skanu – zdjęcia telefonem, krzywe lub ciemne skany
   częściej trafią do sprawdzenia. Kolejny krok: model wizyjny jako druga opinia dla słabych skanów.
-- **Scraper stron** (słowa kluczowe) – odłożony; planowany jako osobny workflow n8n.
 - Dwa identyczne pliki wysłane w tej samej sekundzie mogą oba przejść test duplikatu (brak blokady) – do rozwiązania kolejką.
 - Historia wykonań workflow *Faktury* w n8n zawiera nagłówki żądań (z tokenem). Baza n8n jest lokalna
   i dostępna tylko dla właściciela, a token działa wyłącznie z jednego IP – w wersji firmowej warto ograniczyć
