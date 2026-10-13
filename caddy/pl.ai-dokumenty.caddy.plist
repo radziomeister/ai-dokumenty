@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Caddy (HTTPS dla sieci LAN) jako usługa launchd konta użytkownika – startuje przy logowaniu
+  i jest automatycznie wznawiany po awarii.
+  Instalacja:  cp ten plik do ~/Library/LaunchAgents/ i
+               launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/pl.ai-dokumenty.caddy.plist
+  Restart:     launchctl kickstart -k gui/$(id -u)/pl.ai-dokumenty.caddy
+  Usunięcie:   launchctl bootout gui/$(id -u)/pl.ai-dokumenty.caddy
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>pl.ai-dokumenty.caddy</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/smiley/LLAMA SERVER/ai-dokumenty/narzedzia/caddy</string>
+		<string>run</string>
+		<string>--config</string>
+		<string>/Users/smiley/LLAMA SERVER/ai-dokumenty/caddy/Caddyfile</string>
+		<string>--adapter</string>
+		<string>caddyfile</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<!-- lokalne CA i certyfikaty w projekcie (sekrety/ – tylko dla właściciela, poza gitem) -->
+		<key>XDG_DATA_HOME</key>
+		<string>/Users/smiley/LLAMA SERVER/ai-dokumenty/sekrety/caddy-dane</string>
+		<key>XDG_CONFIG_HOME</key>
+		<string>/Users/smiley/LLAMA SERVER/ai-dokumenty/sekrety/caddy-konfig</string>
+	</dict>
+	<key>WorkingDirectory</key>
+	<string>/Users/smiley/LLAMA SERVER/ai-dokumenty</string>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>/Users/smiley/LLAMA SERVER/ai-dokumenty/logs/caddy.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/smiley/LLAMA SERVER/ai-dokumenty/logs/caddy.log</string>
+</dict>
+</plist>

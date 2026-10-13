@@ -1,0 +1,60 @@
+{
+  "id": "wf3Aktualizacja1",
+  "name": "Aktualizacje agenta: podpisane wersje dla zaufanych komputerów",
+  "nodes": [
+    {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "name": "Prośba o aktualizację",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "aktualizacja",
+        "responseMode": "lastNode",
+        "responseData": "firstEntryJson",
+        "options": {}
+      },
+      "webhookId": "00000000-0000-4000-8000-0000000000cc"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000002",
+      "name": "Token? Manifest lub plik",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// ===== Wspólne funkcje – zbuduj_workflow.py dołącza ten plik na początek każdego węzła Code =====\n// Dziennik zdarzeń (dla administratora): logs/n8n/zdarzenia.jsonl – przegląd: python3 n8n/dziennik.py\n// Rejestr zapisanych dokumentów (wykrywanie duplikatów): BACKUP2/wyniki/_rejestr.jsonl\nconst __fs = require('fs');\nconst DZIENNIK = '/home/node/logi/zdarzenia.jsonl';\nconst REJESTR = '/home/node/praca/wyniki/_rejestr.jsonl';\n\nconst czasTeraz = () => new Date().toLocaleString('sv-SE', { timeZone: 'Europe/Warsaw' });\n\n// Zapis zdarzenia nigdy nie zatrzymuje przetwarzania dokumentu\nconst zapiszZdarzenie = (zdarzenie, dane = {}) => {\n  try {\n    __fs.appendFileSync(DZIENNIK, JSON.stringify({ czas: czasTeraz(), zdarzenie, ...dane }) + '\\n');\n  } catch (e) { /* brak dziennika nie blokuje obiegu */ }\n};\n\nconst wczytajRejestr = () => {\n  if (!__fs.existsSync(REJESTR)) return [];\n  return __fs.readFileSync(REJESTR, 'utf8').split('\\n').filter(Boolean)\n    .map((linia) => { try { return JSON.parse(linia); } catch (e) { return null; } })\n    .filter(Boolean);\n};\n\n// Klucz faktury do porównań: NIP (same cyfry) + numer (bez spacji, wielkie litery)\nconst kluczFaktury = (nip, numer) =>\n  `${String(nip ?? '').replace(/\\D/g, '')}|${String(numer ?? '').toUpperCase().replace(/\\s+/g, '')}`;\n// ===== koniec części wspólnej =====\n\n// Aktualizacje agenta (klient/aktualizacja.ps1). Tylko zaufany komputer z ważnym tokenem\n// wysłanym z adresu IP, dla którego token wydano.\n//   body {}                 → podpisany manifest (wersja, zmiany, pliki + SHA-256)\n//   body { plik: \"nazwa\" }  → treść pliku z OPUBLIKOWANEJ wersji (base64); nazwa musi być w manifeście\n// Publikacja nowej wersji: python3 klient/publikuj.py (podpis kluczem z sekrety/podpis/).\nconst fs = require('fs');\nconst path = require('path');\nconst crypto = require('crypto');\n\nconst DYSTRYBUCJA = '/home/node/dystrybucja';\nconst KLIENCI = '/home/node/klienci/klienci.json';\n\nconst czytajJson = (p) => {\n  for (let proba = 1; ; proba++) {\n    try {\n      return fs.existsSync(p) && fs.statSync(p).size ? JSON.parse(fs.readFileSync(p, 'utf8')) : {};\n    } catch (e) {\n      if (proba >= 5) throw e;\n      const koniec = Date.now() + 200; while (Date.now() < koniec) { /* krótka pauza */ }\n    }\n  }\n};\n\nconst naglowki = $json.headers ?? {};\nconst ip = String(naglowki['x-forwarded-for'] ?? '').split(',')[0].trim().replace(/^::ffff:/, '');\nconst token = String(naglowki['x-klient-token'] ?? '');\nconst klienci = czytajJson(KLIENCI);\nconst skrot = crypto.createHash('sha256').update(token).digest();\nconst klient = token\n  ? Object.keys(klienci).find((k) => crypto.timingSafeEqual(Buffer.from(klienci[k].skrot, 'hex'), skrot)) ?? null\n  : null;\n\nconst odmowa = (kod, powod) => {\n  zapiszZdarzenie('aktualizacja_odrzucona', { klient, ip, kod, powod });\n  return { json: { status: 'odrzucono', kod, powod } };\n};\nif (!klient) return odmowa('NIEZAUFANY', 'Ten komputer nie ma ważnego tokenu – uruchom token.ps1 albo zgłoś się do administratora.');\nif (klienci[klient].ip !== ip) return odmowa('INNY_ADRES_IP', 'Token tego komputera wydano dla innego adresu IP.');\n\nconst publikacja = czytajJson(path.join(DYSTRYBUCJA, 'aktualizacja.json'));\nif (!publikacja.manifest_b64) return odmowa('BRAK_WERSJI', 'Na serwerze nie opublikowano jeszcze żadnej wersji agenta.');\nconst manifest = JSON.parse(Buffer.from(publikacja.manifest_b64, 'base64').toString('utf8'));\n\nconst zadanyPlik = $json.body?.plik;\nif (!zadanyPlik) {\n  zapiszZdarzenie('aktualizacja_sprawdzenie', { klient, ip, wersja: manifest.wersja });\n  return { json: { status: 'ok', wersja: manifest.wersja, manifest_b64: publikacja.manifest_b64, podpis: publikacja.podpis } };\n}\n\n// Tylko pliki wymienione w podpisanym manifeście – nazwa z manifestu, nie od klienta (brak ścieżek typu ../)\nconst wpis = manifest.pliki.find((p) => p.nazwa === zadanyPlik);\nif (!wpis) return odmowa('NIEZNANY_PLIK', 'Tego pliku nie ma w opublikowanej wersji.');\nconst tresc = fs.readFileSync(path.join(DYSTRYBUCJA, 'pliki', manifest.wersja, path.basename(wpis.nazwa)));\nzapiszZdarzenie('aktualizacja_pobranie', { klient, ip, plik: wpis.nazwa, wersja: manifest.wersja });\nreturn { json: { status: 'ok', plik: wpis.nazwa, sha256: wpis.sha256, tresc_b64: tresc.toString('base64') } };\n",
+        "mode": "runOnceForEachItem"
+      }
+    }
+  ],
+  "connections": {
+    "Prośba o aktualizację": {
+      "main": [
+        [
+          {
+            "node": "Token? Manifest lub plik",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none"
+  },
+  "active": false,
+  "pinData": {},
+  "meta": {
+    "opis": "Generowany przez n8n/zbuduj_workflow.py – edytuj n8n/kod/10_aktualizacja.js."
+  }
+}

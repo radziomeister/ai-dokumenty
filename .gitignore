@@ -1,0 +1,41 @@
+# Sekrety – nigdy do repozytorium
+.env
+.env.*
+!.env.example
+sekrety/
+
+# Środowisko Pythona
+.venv/
+__pycache__/
+*.pyc
+
+# Dane robocze i logi
+dane/
+logs/
+*.log
+
+# macOS / Windows
+.DS_Store
+Thumbs.db
+
+# Narzędzia binarne (pobierane osobno, patrz README)
+narzedzia/rclone
+narzedzia/rclone.exe
+narzedzia/rclone.conf
+
+# Caddy (macOS): klucz lokalnego CA w sekrety/caddy-dane
+narzedzia/caddy
+
+# Numer wersji ostatniego wdrożenia (generowany)
+n8n/wersja.txt
+
+# Opublikowane wersje agenta (generowane przez klient/publikuj.py)
+dystrybucja/
+
+# Pliki tymczasowe zapisu atomowego
+*.tmp
+
+# Prywatne notatki (np. dane aplikacji z Entra ID) – nigdy do repozytorium
+*.rtf
+*.rtfd/
+notatki/

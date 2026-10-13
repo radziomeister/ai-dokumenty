@@ -1,0 +1,46 @@
+﻿AGENT „AI FAKTURY” – KOMPUTER Z WINDOWS
+======================================
+
+W tym folderze muszą być: instaluj.ps1, agent.ps1, token.ps1, aktualizacja.ps1, aktualizacja.cmd,
+WERSJA, caddy-root.crt
+
+Wszystkie komendy wpisuj w PowerShell otwartym w tym folderze
+(Shift + prawy przycisk myszy w folderze → „Otwórz okno PowerShell tutaj”).
+
+
+INSTALACJA, AKTUALIZACJA, NAPRAWA (np. po usunięciu folderu AI Faktury)
+       powershell -NoProfile -ExecutionPolicy Bypass -File .\instaluj.ps1
+
+   - tworzy folder „AI Faktury” na Pulpicie (tylko instalator go tworzy),
+   - sprawdza token i w razie potrzeby pobiera nowy,
+   - uruchamia agenta (startuje też automatycznie po zalogowaniu).
+   Jeśli zobaczysz „nie jest jeszcze zaufany” albo „token do resetu” – zostaw okno otwarte
+   i zgłoś się do administratora. Instalator sam ponawia prośbę co 30 sekund.
+
+
+SAM TOKEN (bez reinstalacji)
+   Sprawdź, czy zapamiętany token jest ważny (niczego nie zmienia):
+       powershell -NoProfile -ExecutionPolicy Bypass -File .\token.ps1 -TylkoSprawdz
+
+   Sprawdź i – jeśli trzeba – pobierz nowy token (agent zostanie uruchomiony ponownie):
+       powershell -NoProfile -ExecutionPolicy Bypass -File .\token.ps1
+
+
+AKTUALIZACJA AGENTA
+   Dwuklik na skrót „AI Faktury - aktualizacja” na Pulpicie (tworzy go instalator).
+   Agent zostanie zatrzymany, nowa wersja pobrana szyfrowanym połączeniem, sprawdzona
+   (podpis cyfrowy serwera + sumy kontrolne) i zainstalowana, a agent uruchomiony ponownie.
+   Jeśli masz najnowszą wersję – zobaczysz komunikat; dowolny klawisz zamyka okno.
+
+KORZYSTANIE
+   Wrzucaj faktury PDF do folderu „AI Faktury” na Pulpicie. Wynik pokaże się jako powiadomienie:
+     Wysłane\          – dane zapisane na serwerze
+     Do sprawdzenia\   – serwer miał wątpliwości (powód w pliku .POWÓD.txt)
+     Nie wysłane\      – serwer odrzucił plik (pojawi się okno z powodem i kodem błędu),
+                       także DUPLIKAT – ten dokument był już wcześniej dodany
+
+
+ODINSTALOWANIE
+       powershell -NoProfile -ExecutionPolicy Bypass -File .\instaluj.ps1 -Odinstaluj
+
+Dziennik agenta: %APPDATA%\AI-Faktury\agent.log

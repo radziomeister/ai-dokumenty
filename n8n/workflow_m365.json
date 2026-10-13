@@ -1,0 +1,350 @@
+{
+  "id": "wf4Microsoft3651",
+  "name": "Synchronizacja M365: PDF do SharePointa, wiersz do Excela",
+  "nodes": [
+    {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "name": "Co minutę",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000002",
+      "name": "Kolejka M365",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// ===== Wspólne funkcje – zbuduj_workflow.py dołącza ten plik na początek każdego węzła Code =====\n// Dziennik zdarzeń (dla administratora): logs/n8n/zdarzenia.jsonl – przegląd: python3 n8n/dziennik.py\n// Rejestr zapisanych dokumentów (wykrywanie duplikatów): BACKUP2/wyniki/_rejestr.jsonl\nconst __fs = require('fs');\nconst DZIENNIK = '/home/node/logi/zdarzenia.jsonl';\nconst REJESTR = '/home/node/praca/wyniki/_rejestr.jsonl';\n\nconst czasTeraz = () => new Date().toLocaleString('sv-SE', { timeZone: 'Europe/Warsaw' });\n\n// Zapis zdarzenia nigdy nie zatrzymuje przetwarzania dokumentu\nconst zapiszZdarzenie = (zdarzenie, dane = {}) => {\n  try {\n    __fs.appendFileSync(DZIENNIK, JSON.stringify({ czas: czasTeraz(), zdarzenie, ...dane }) + '\\n');\n  } catch (e) { /* brak dziennika nie blokuje obiegu */ }\n};\n\nconst wczytajRejestr = () => {\n  if (!__fs.existsSync(REJESTR)) return [];\n  return __fs.readFileSync(REJESTR, 'utf8').split('\\n').filter(Boolean)\n    .map((linia) => { try { return JSON.parse(linia); } catch (e) { return null; } })\n    .filter(Boolean);\n};\n\n// Klucz faktury do porównań: NIP (same cyfry) + numer (bez spacji, wielkie litery)\nconst kluczFaktury = (nip, numer) =>\n  `${String(nip ?? '').replace(/\\D/g, '')}|${String(numer ?? '').toUpperCase().replace(/\\s+/g, '')}`;\n// ===== koniec części wspólnej =====\n\n// Kolejka wysyłek do Microsoft 365. Zadania tworzy „Zapisz wynik” (workflow Faktury):\n// BACKUP2/m365_kolejka/*.json → PDF do SharePointa + wiersz w tabeli Excela.\n// Ponowienia z rosnącą przerwą: po n-tej nieudanej próbie zadanie czeka n minut (maks. 30).\nconst fs = require('fs');\nconst path = require('path');\n\nconst KOLEJKA = '/home/node/praca/m365_kolejka';\nconst M365 = {\n  witryna: 'aifaktury.sharepoint.com:/sites/FakturyAI',   // host:/ścieżka witryny SharePoint\n  plikExcela: 'Faktury AI.xlsx',                          // w bibliotece „Dokumenty” witryny\n  tabela: 'Faktury',                                      // nazwa tabeli (wielkość liter bez znaczenia)\n  folder: 'Faktury',                                      // oryginały: Faktury/RRRR/MM/\n};\nconst MAKS_NA_RAZ = 10;\n\nif (!fs.existsSync(KOLEJKA)) return [];\nconst teraz = Date.now();\nconst zadania = [];\nfor (const nazwa of fs.readdirSync(KOLEJKA).filter((n) => n.endsWith('.json')).sort()) {\n  const plik = path.join(KOLEJKA, nazwa);\n  let z;\n  try { z = JSON.parse(fs.readFileSync(plik, 'utf8')); } catch (e) { continue; }\n  if (z.proby && teraz - (z.ostatnia_proba_ms ?? 0) < Math.min(z.proby, 30) * 60000) continue;\n\n  zadania.push({\n    json: {\n      ...z,\n      plik_zadania: plik,\n      m365: {\n        ...M365,\n        sciezkaUrl: [M365.folder, z.rok, z.miesiac, z.nazwa_pdf].map(encodeURIComponent).join('/'),\n        excelUrl: encodeURIComponent(M365.plikExcela),\n      },\n    },\n  });\n  if (zadania.length >= MAKS_NA_RAZ) break;\n}\nreturn zadania;\n"
+      }
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000003",
+      "name": "Witryna SharePoint",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://graph.microsoft.com/v1.0/sites/' + $json.m365.witryna }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "credentials": {
+        "oAuth2Api": {
+          "id": "2tJpqCOLFQqBQNPv",
+          "name": "Microsoft 365 – AI Faktury"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000004",
+      "name": "Wczytaj PDF",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        300
+      ],
+      "parameters": {
+        "operation": "read",
+        "fileSelector": "={{ $('Kolejka M365').item.json.pdf }}",
+        "options": {}
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000005",
+      "name": "SharePoint: wyślij PDF",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        300
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ 'https://graph.microsoft.com/v1.0/sites/' + $('Witryna SharePoint').item.json.id + '/drive/root:/' + $('Kolejka M365').item.json.m365.sciezkaUrl + ':/content' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "credentials": {
+        "oAuth2Api": {
+          "id": "2tJpqCOLFQqBQNPv",
+          "name": "Microsoft 365 – AI Faktury"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000010",
+      "name": "Excel: tabele w pliku",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://graph.microsoft.com/v1.0/sites/' + $('Witryna SharePoint').item.json.id + '/drive/root:/' + $('Kolejka M365').item.json.m365.excelUrl + ':/workbook/tables' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "credentials": {
+        "oAuth2Api": {
+          "id": "2tJpqCOLFQqBQNPv",
+          "name": "Microsoft 365 – AI Faktury"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000006",
+      "name": "Wiersz do Excela",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// ===== Wspólne funkcje – zbuduj_workflow.py dołącza ten plik na początek każdego węzła Code =====\n// Dziennik zdarzeń (dla administratora): logs/n8n/zdarzenia.jsonl – przegląd: python3 n8n/dziennik.py\n// Rejestr zapisanych dokumentów (wykrywanie duplikatów): BACKUP2/wyniki/_rejestr.jsonl\nconst __fs = require('fs');\nconst DZIENNIK = '/home/node/logi/zdarzenia.jsonl';\nconst REJESTR = '/home/node/praca/wyniki/_rejestr.jsonl';\n\nconst czasTeraz = () => new Date().toLocaleString('sv-SE', { timeZone: 'Europe/Warsaw' });\n\n// Zapis zdarzenia nigdy nie zatrzymuje przetwarzania dokumentu\nconst zapiszZdarzenie = (zdarzenie, dane = {}) => {\n  try {\n    __fs.appendFileSync(DZIENNIK, JSON.stringify({ czas: czasTeraz(), zdarzenie, ...dane }) + '\\n');\n  } catch (e) { /* brak dziennika nie blokuje obiegu */ }\n};\n\nconst wczytajRejestr = () => {\n  if (!__fs.existsSync(REJESTR)) return [];\n  return __fs.readFileSync(REJESTR, 'utf8').split('\\n').filter(Boolean)\n    .map((linia) => { try { return JSON.parse(linia); } catch (e) { return null; } })\n    .filter(Boolean);\n};\n\n// Klucz faktury do porównań: NIP (same cyfry) + numer (bez spacji, wielkie litery)\nconst kluczFaktury = (nip, numer) =>\n  `${String(nip ?? '').replace(/\\D/g, '')}|${String(numer ?? '').toUpperCase().replace(/\\s+/g, '')}`;\n// ===== koniec części wspólnej =====\n\n// Wiersz do tabeli Excela – kolumny jak w wyniki/faktury.csv, w kolumnie „plik” klikalny link do PDF w SharePoincie.\nconst z = $('Kolejka M365').item.json;\n\n// Tabela: nazwa z konfiguracji bez względu na wielkość liter, a gdy w pliku jest tylko jedna – ta jedna\nconst tabele = $('Excel: tabele w pliku').item.json.value ?? [];\nconst tabela = tabele.find((t) => t.name.toLowerCase() === z.m365.tabela.toLowerCase())\n  ?? (tabele.length === 1 ? tabele[0] : null);\nif (!tabela) {\n  throw new Error(`W pliku ${z.m365.plikExcela} nie ma tabeli „${z.m365.tabela}”. `\n    + `Tabele w pliku: ${tabele.map((t) => t.name).join(', ') || 'brak (wstaw tabelę: Wstaw → Tabela)'}`);\n}\nconst link = $('SharePoint: wyślij PDF').item.json.webUrl ?? '';\n// Klikalny link „PDF”. Formuła jest tu bezpieczna: adres pochodzi z odpowiedzi Microsoft Graph, nie z dokumentu.\n// (Formuły przez Graph zapisuje się w składni angielskiej – HYPERLINK i przecinek.)\nconst linkPdf = /^https:\\/\\/[^\"]+$/.test(link) ? `=HYPERLINK(\"${link}\",\"PDF\")` : '';\nconst w = z.wiersz;\n// Tekst zaczynający się od = + - @ Excel potraktowałby jak formułę (Excel/CSV injection)\nconst tekst = (v) => {\n  const s = v === null || v === undefined ? '' : String(v);\n  return /^[=+\\-@]/.test(s) ? \"'\" + s : s;\n};\n\nreturn {\n  json: {\n    tabelaUrl: encodeURIComponent(tabela.id),\n    cialo: {\n      values: [[\n        w.przetworzono, linkPdf, tekst(w.numer_dokumentu), w.data_wystawienia, tekst(w.nip_sprzedawcy),\n        tekst(w.kontrahent), w.kwota_netto, w.kwota_vat, w.kwota_brutto, w.waluta,\n        tekst(w.ostrzezenia), tekst(w.zrodlo),\n      ]],\n    },\n  },\n};\n",
+        "mode": "runOnceForEachItem"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000007",
+      "name": "Excel: dodaj wiersz",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://graph.microsoft.com/v1.0/sites/' + $('Witryna SharePoint').item.json.id + '/drive/root:/' + $('Kolejka M365').item.json.m365.excelUrl + ':/workbook/tables/' + $json.tabelaUrl + '/rows/add' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.cialo) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "credentials": {
+        "oAuth2Api": {
+          "id": "2tJpqCOLFQqBQNPv",
+          "name": "Microsoft 365 – AI Faktury"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000008",
+      "name": "Wysłano",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// ===== Wspólne funkcje – zbuduj_workflow.py dołącza ten plik na początek każdego węzła Code =====\n// Dziennik zdarzeń (dla administratora): logs/n8n/zdarzenia.jsonl – przegląd: python3 n8n/dziennik.py\n// Rejestr zapisanych dokumentów (wykrywanie duplikatów): BACKUP2/wyniki/_rejestr.jsonl\nconst __fs = require('fs');\nconst DZIENNIK = '/home/node/logi/zdarzenia.jsonl';\nconst REJESTR = '/home/node/praca/wyniki/_rejestr.jsonl';\n\nconst czasTeraz = () => new Date().toLocaleString('sv-SE', { timeZone: 'Europe/Warsaw' });\n\n// Zapis zdarzenia nigdy nie zatrzymuje przetwarzania dokumentu\nconst zapiszZdarzenie = (zdarzenie, dane = {}) => {\n  try {\n    __fs.appendFileSync(DZIENNIK, JSON.stringify({ czas: czasTeraz(), zdarzenie, ...dane }) + '\\n');\n  } catch (e) { /* brak dziennika nie blokuje obiegu */ }\n};\n\nconst wczytajRejestr = () => {\n  if (!__fs.existsSync(REJESTR)) return [];\n  return __fs.readFileSync(REJESTR, 'utf8').split('\\n').filter(Boolean)\n    .map((linia) => { try { return JSON.parse(linia); } catch (e) { return null; } })\n    .filter(Boolean);\n};\n\n// Klucz faktury do porównań: NIP (same cyfry) + numer (bez spacji, wielkie litery)\nconst kluczFaktury = (nip, numer) =>\n  `${String(nip ?? '').replace(/\\D/g, '')}|${String(numer ?? '').toUpperCase().replace(/\\s+/g, '')}`;\n// ===== koniec części wspólnej =====\n\n// Zadanie wykonane: PDF w SharePoincie, wiersz w Excelu → zadanie do m365_kolejka/wyslane/.\nconst fs = require('fs');\nconst path = require('path');\n\nconst z = $('Kolejka M365').item.json;\nconst link = $('SharePoint: wyślij PDF').item.json.webUrl ?? null;\nconst { m365, plik_zadania, ...dane } = z;\n\nconst cel = path.join(path.dirname(plik_zadania), 'wyslane');\nfs.mkdirSync(cel, { recursive: true });\nfs.writeFileSync(path.join(cel, path.basename(plik_zadania)),\n  JSON.stringify({ ...dane, wyslano: czasTeraz(), link_sharepoint: link }, null, 2));\nfs.unlinkSync(plik_zadania);\n\nzapiszZdarzenie('m365_zapisano', {\n  klient: z.klient, ip: z.ip, plik: z.nazwa_pdf, numer_dokumentu: z.wiersz.numer_dokumentu,\n  link, proba: (z.proby ?? 0) + 1,\n});\nreturn { json: { status: 'ok', plik: z.nazwa_pdf, link } };\n",
+        "mode": "runOnceForEachItem"
+      }
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000009",
+      "name": "Błąd – ponowię później",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        560
+      ],
+      "parameters": {
+        "jsCode": "// ===== Wspólne funkcje – zbuduj_workflow.py dołącza ten plik na początek każdego węzła Code =====\n// Dziennik zdarzeń (dla administratora): logs/n8n/zdarzenia.jsonl – przegląd: python3 n8n/dziennik.py\n// Rejestr zapisanych dokumentów (wykrywanie duplikatów): BACKUP2/wyniki/_rejestr.jsonl\nconst __fs = require('fs');\nconst DZIENNIK = '/home/node/logi/zdarzenia.jsonl';\nconst REJESTR = '/home/node/praca/wyniki/_rejestr.jsonl';\n\nconst czasTeraz = () => new Date().toLocaleString('sv-SE', { timeZone: 'Europe/Warsaw' });\n\n// Zapis zdarzenia nigdy nie zatrzymuje przetwarzania dokumentu\nconst zapiszZdarzenie = (zdarzenie, dane = {}) => {\n  try {\n    __fs.appendFileSync(DZIENNIK, JSON.stringify({ czas: czasTeraz(), zdarzenie, ...dane }) + '\\n');\n  } catch (e) { /* brak dziennika nie blokuje obiegu */ }\n};\n\nconst wczytajRejestr = () => {\n  if (!__fs.existsSync(REJESTR)) return [];\n  return __fs.readFileSync(REJESTR, 'utf8').split('\\n').filter(Boolean)\n    .map((linia) => { try { return JSON.parse(linia); } catch (e) { return null; } })\n    .filter(Boolean);\n};\n\n// Klucz faktury do porównań: NIP (same cyfry) + numer (bez spacji, wielkie litery)\nconst kluczFaktury = (nip, numer) =>\n  `${String(nip ?? '').replace(/\\D/g, '')}|${String(numer ?? '').toUpperCase().replace(/\\s+/g, '')}`;\n// ===== koniec części wspólnej =====\n\n// Nieudana wysyłka do Microsoft 365 (brak internetu, wygasłe logowanie, zły adres…):\n// zadanie zostaje w kolejce z licznikiem prób; po 20 próbach → m365_kolejka/bledy/ + powiadomienie.\nconst fs = require('fs');\nconst path = require('path');\n\nconst MAKS_PROB = 20;\nconst z = $('Kolejka M365').item.json;\nconst blad = [$json.error?.message, $json.error?.description].filter(Boolean).join(' – ').slice(0, 500)\n  || JSON.stringify($json).slice(0, 300);\nconst krok = $prevNode?.name ?? '?';   // który krok się nie udał (witryna, PDF, wysyłka, Excel)\nconst proby = (z.proby ?? 0) + 1;\nconst { m365, plik_zadania, ...dane } = z;\nconst nowe = { ...dane, proby, ostatni_krok: krok, ostatni_blad: blad, ostatnia_proba: czasTeraz(), ostatnia_proba_ms: Date.now() };\n\nif (proby >= MAKS_PROB) {\n  const cel = path.join(path.dirname(plik_zadania), 'bledy');\n  fs.mkdirSync(cel, { recursive: true });\n  fs.writeFileSync(path.join(cel, path.basename(plik_zadania)), JSON.stringify(nowe, null, 2));\n  fs.unlinkSync(plik_zadania);\n  fs.appendFileSync('/home/node/praca/do_sprawdzenia/_powiadomienia.log',\n    `${czasTeraz()}  ${z.nazwa_pdf}  M365: nie udało się wysłać po ${proby} próbach – ${blad}\\n`);\n  zapiszZdarzenie('m365_porzucono', { klient: z.klient, ip: z.ip, plik: z.nazwa_pdf, proby, krok, blad });\n} else {\n  fs.writeFileSync(plik_zadania + '.tmp', JSON.stringify(nowe, null, 2));\n  fs.renameSync(plik_zadania + '.tmp', plik_zadania);\n  zapiszZdarzenie('m365_blad', { klient: z.klient, ip: z.ip, plik: z.nazwa_pdf, proby, krok, blad });\n}\nreturn { json: { status: 'blad', plik: z.nazwa_pdf, proby, blad } };\n",
+        "mode": "runOnceForEachItem"
+      }
+    }
+  ],
+  "connections": {
+    "Co minutę": {
+      "main": [
+        [
+          {
+            "node": "Kolejka M365",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kolejka M365": {
+      "main": [
+        [
+          {
+            "node": "Witryna SharePoint",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Witryna SharePoint": {
+      "main": [
+        [
+          {
+            "node": "Wczytaj PDF",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Błąd – ponowię później",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wczytaj PDF": {
+      "main": [
+        [
+          {
+            "node": "SharePoint: wyślij PDF",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Błąd – ponowię później",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SharePoint: wyślij PDF": {
+      "main": [
+        [
+          {
+            "node": "Excel: tabele w pliku",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Błąd – ponowię później",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Excel: tabele w pliku": {
+      "main": [
+        [
+          {
+            "node": "Wiersz do Excela",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Błąd – ponowię później",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wiersz do Excela": {
+      "main": [
+        [
+          {
+            "node": "Excel: dodaj wiersz",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Błąd – ponowię później",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Excel: dodaj wiersz": {
+      "main": [
+        [
+          {
+            "node": "Wysłano",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Błąd – ponowię później",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none",
+    "saveManualExecutions": false
+  },
+  "active": false,
+  "pinData": {},
+  "meta": {
+    "opis": "Generowany przez n8n/zbuduj_workflow.py – edytuj n8n/kod/11–14_m365_*.js."
+  }
+}

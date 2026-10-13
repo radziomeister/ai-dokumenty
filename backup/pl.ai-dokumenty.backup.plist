@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Harmonogram backupu (launchd, konto użytkownika).
+  Instalacja:  cp ten plik do ~/Library/LaunchAgents/ i
+               launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/pl.ai-dokumenty.backup.plist
+  Usunięcie:   launchctl bootout gui/$(id -u)/pl.ai-dokumenty.backup
+               rm ~/Library/LaunchAgents/pl.ai-dokumenty.backup.plist
+  Harmonogram: co noc o 2:00 (na czas testów można zamienić na <key>StartInterval</key><integer>3600</integer>).
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>pl.ai-dokumenty.backup</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>/Users/smiley/LLAMA SERVER/ai-dokumenty/backup/backup_ollama.sh</string>
+	</array>
+	<!-- Co noc o 2:00. Jeśli Mac o tej porze śpi, launchd uruchomi backup zaraz po wybudzeniu. -->
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>2</integer>
+		<key>Minute</key>
+		<integer>0</integer>
+	</dict>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>LowPriorityIO</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>/Users/smiley/LLAMA SERVER/ai-dokumenty/logs/launchd.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/smiley/LLAMA SERVER/ai-dokumenty/logs/launchd.log</string>
+</dict>
+</plist>

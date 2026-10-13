@@ -1,0 +1,60 @@
+{
+  "id": "wf2Rejestracja01",
+  "name": "Rejestracja agentów: token dla zaufanych komputerów",
+  "nodes": [
+    {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "name": "Prośba o token",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "rejestracja",
+        "responseMode": "lastNode",
+        "responseData": "firstEntryJson",
+        "options": {}
+      },
+      "webhookId": "00000000-0000-4000-8000-0000000000bb"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000002",
+      "name": "Zaufany? Wydaj token",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// ===== Wspólne funkcje – zbuduj_workflow.py dołącza ten plik na początek każdego węzła Code =====\n// Dziennik zdarzeń (dla administratora): logs/n8n/zdarzenia.jsonl – przegląd: python3 n8n/dziennik.py\n// Rejestr zapisanych dokumentów (wykrywanie duplikatów): BACKUP2/wyniki/_rejestr.jsonl\nconst __fs = require('fs');\nconst DZIENNIK = '/home/node/logi/zdarzenia.jsonl';\nconst REJESTR = '/home/node/praca/wyniki/_rejestr.jsonl';\n\nconst czasTeraz = () => new Date().toLocaleString('sv-SE', { timeZone: 'Europe/Warsaw' });\n\n// Zapis zdarzenia nigdy nie zatrzymuje przetwarzania dokumentu\nconst zapiszZdarzenie = (zdarzenie, dane = {}) => {\n  try {\n    __fs.appendFileSync(DZIENNIK, JSON.stringify({ czas: czasTeraz(), zdarzenie, ...dane }) + '\\n');\n  } catch (e) { /* brak dziennika nie blokuje obiegu */ }\n};\n\nconst wczytajRejestr = () => {\n  if (!__fs.existsSync(REJESTR)) return [];\n  return __fs.readFileSync(REJESTR, 'utf8').split('\\n').filter(Boolean)\n    .map((linia) => { try { return JSON.parse(linia); } catch (e) { return null; } })\n    .filter(Boolean);\n};\n\n// Klucz faktury do porównań: NIP (same cyfry) + numer (bez spacji, wielkie litery)\nconst kluczFaktury = (nip, numer) =>\n  `${String(nip ?? '').replace(/\\D/g, '')}|${String(numer ?? '').toUpperCase().replace(/\\s+/g, '')}`;\n// ===== koniec części wspólnej =====\n\n// Rejestracja agenta: serwer sam wydaje token zaufanym komputerom z sieci lokalnej.\n// Instalator zawsze pyta serwer i dołącza zapisany token (nagłówek X-Klient-Token), jeśli go ma:\n//  - token ważny dla tego IP                          → „aktualny” (instalator tylko aktualizuje agenta)\n//  - { \"tylko_sprawdz\": true }                         → sam stan, bez wydawania tokenu i bez prośby do admina\n//  - IP na liście zaufanych i token jeszcze nie wydany → nowy token (zwracany tylko raz)\n//  - IP zaufane, token już wydany                     → odmowa (admin musi zresetować: klienci.py resetuj)\n//  - IP nieznane                                      → prośba w dzienniku, „oczekuje”\n// Adres IP pochodzi z nagłówka X-Forwarded-For ustawianego przez Caddy\n// (Caddy ignoruje ten nagłówek, jeśli przysyła go sam klient).\nconst fs = require('fs');\nconst crypto = require('crypto');\n\nconst ZAUFANE = '/home/node/zaufane/zaufane.json';\nconst KLIENCI = '/home/node/klienci/klienci.json';\nconst PROSBY = '/home/node/klienci/prosby.log';\n\n// Odczyt z ponowieniem: plik zmieniany po stronie macOS bywa przez chwilę widoczny niekompletnie\nconst czytaj = (p) => {\n  for (let proba = 1; ; proba++) {\n    try {\n      return fs.existsSync(p) && fs.statSync(p).size ? JSON.parse(fs.readFileSync(p, 'utf8')) : {};\n    } catch (e) {\n      if (proba >= 5) throw e;\n      const koniec = Date.now() + 200; while (Date.now() < koniec) { /* krótka pauza */ }\n    }\n  }\n};\n// Zapis atomowy: plik tymczasowy + podmiana nazwy\nconst zapiszAtomowo = (p, dane) => {\n  fs.writeFileSync(p + '.tmp', JSON.stringify(dane, null, 2));\n  fs.renameSync(p + '.tmp', p);\n};\nconst teraz = new Date().toLocaleString('sv-SE', { timeZone: 'Europe/Warsaw' });\nconst tekst = (v, max) => String(v ?? '').replace(/[^\\p{L}\\p{N} ._-]/gu, '').slice(0, max);\n\nconst WERSJA = '20261013-195304'; // wstawiana przez zbuduj_workflow.py\nconst naglowki = $json.headers ?? {};\n\n// Test po wdrożeniu (n8n/wdroz.sh): którą wersję workflow obsługuje serwer – bez zapisu w dziennikach\nif (naglowki['x-sprawdzenie-wdrozenia']) return { json: { wersja: WERSJA } };\nconst ip = String(naglowki['x-forwarded-for'] ?? '').split(',')[0].trim().replace(/^::ffff:/, '');\nconst komputer = tekst($json.body?.komputer, 40);\nconst uzytkownik = tekst($json.body?.uzytkownik, 40);\n\nconst zaufane = czytaj(ZAUFANE);\nconst klienci = czytaj(KLIENCI);\nconst nazwa = zaufane[ip];\n\n// Czy komputer ma już ważny token? (porównanie skrótów w stałym czasie)\nconst tokenKlienta = String(naglowki['x-klient-token'] ?? '');\nconst tokenWazny = Boolean(tokenKlienta && nazwa && klienci[nazwa] && klienci[nazwa].ip === ip\n  && crypto.timingSafeEqual(Buffer.from(klienci[nazwa].skrot, 'hex'),\n    crypto.createHash('sha256').update(tokenKlienta).digest()));\n\nconst zapiszProsbe = (wynik) => {\n  fs.appendFileSync(PROSBY, JSON.stringify({ czas: teraz, ip, komputer, uzytkownik, wynik }) + '\\n');\n  zapiszZdarzenie('rejestracja', { klient: nazwa ?? null, ip, komputer, uzytkownik, wynik });\n};\n\nif (tokenWazny) {\n  zapiszProsbe(`token aktualny: ${nazwa}`);\n  return { json: { status: 'aktualny', kod: 'TOKEN_WAZNY', ip, klient: nazwa } };\n}\n\n// Tryb „tylko sprawdź” (token.ps1 -TylkoSprawdz): niczego nie zmienia\nif ($json.body?.tylko_sprawdz === true) {\n  const kod = !ip ? 'BRAK_IP' : !nazwa ? 'NIEZAUFANY' : klienci[nazwa] ? 'TOKEN_JUZ_WYDANY' : 'MOZNA_POBRAC';\n  const opis = {\n    BRAK_IP: 'Serwer nie rozpoznał adresu IP komputera.',\n    NIEZAUFANY: 'Ten komputer nie jest na liście zaufanych serwera AI – poproś administratora o zatwierdzenie.',\n    TOKEN_JUZ_WYDANY: 'Zapamiętany token jest nieważny, a serwer ma wydany inny – administrator musi go zresetować.',\n    MOZNA_POBRAC: 'Komputer jest zaufany i nie ma tokenu – uruchom token.ps1 (bez -TylkoSprawdz), aby go pobrać.',\n  }[kod];\n  zapiszProsbe(`sprawdzenie: ${kod}`);\n  return { json: { status: 'sprawdzono', kod, ip, klient: nazwa ?? null, komunikat: opis } };\n}\n\nif (!ip) {\n  zapiszProsbe('odrzucono: brak adresu IP');\n  return { json: { status: 'odrzucono', kod: 'BRAK_IP', komunikat: 'Serwer nie rozpoznał adresu IP komputera' } };\n}\n\nif (!nazwa) {\n  zapiszProsbe('oczekuje');\n  return {\n    json: {\n      status: 'oczekuje', kod: 'OCZEKUJE', ip, komputer,\n      komunikat: `Komputer ${komputer || '?'} (${ip}) nie jest jeszcze zaufany. Administrator musi go zatwierdzić.`,\n    },\n  };\n}\n\nif (klienci[nazwa]) {\n  zapiszProsbe(`odrzucono: token dla ${nazwa} już wydano`);\n  return {\n    json: {\n      status: 'odrzucono', kod: 'TOKEN_JUZ_WYDANY', ip, klient: nazwa,\n      komunikat: `Ten komputer (${nazwa}) ma już wydany token. Jeśli agent został odinstalowany `\n        + 'albo token zginął, administrator musi go zresetować.',\n    },\n  };\n}\n\nconst token = crypto.randomBytes(32).toString('base64url');\nklienci[nazwa] = {\n  skrot: crypto.createHash('sha256').update(token).digest('hex'),\n  ip, komputer, uzytkownik, wydano: teraz,\n};\nzapiszAtomowo(KLIENCI, klienci);\nzapiszProsbe(`wydano token: ${nazwa}`);\n\nreturn { json: { status: 'wydano', klient: nazwa, ip, token } };\n",
+        "mode": "runOnceForEachItem"
+      }
+    }
+  ],
+  "connections": {
+    "Prośba o token": {
+      "main": [
+        [
+          {
+            "node": "Zaufany? Wydaj token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none"
+  },
+  "active": false,
+  "pinData": {},
+  "meta": {
+    "opis": "Generowany przez n8n/zbuduj_workflow.py – edytuj n8n/kod/6_rejestracja.js."
+  }
+}

@@ -1,0 +1,77 @@
+# Lokalny system AI do dokumentów: n8n + OCR (Ollama i Caddy działają poza Dockerem).
+# Start:   docker compose up -d
+# Stop:    docker compose down
+# Update:  docker compose pull && docker compose up -d
+#
+# Z sieci LAN dostępny jest tylko Caddy (HTTPS, uruchamiany przez launchd poza Dockerem):
+#   https://192.168.1.109:8443   → n8n (edytor + webhooki agentów)
+# n8n słucha wyłącznie na 127.0.0.1 tego komputera.
+# Ollama działa poza Dockerem, też tylko na 127.0.0.1:11434.
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: n8n
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5678:5678"   # tylko lokalnie; z LAN przez Caddy
+    env_file: .env              # N8N_ENCRYPTION_KEY
+    environment:
+      - GENERIC_TIMEZONE=Europe/Warsaw
+      - TZ=Europe/Warsaw
+      - N8N_HOST=192.168.1.109
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - N8N_EDITOR_BASE_URL=https://192.168.1.109:8443/
+      - WEBHOOK_URL=https://192.168.1.109:8443/   # też redirect URL dla OAuth (Entra ID)
+      - N8N_PROXY_HOPS=1
+      # Węzły plikowe widzą tylko folder roboczy
+      - N8N_RESTRICT_FILE_ACCESS_TO=/home/node/praca
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=true
+      # Local File Trigger włączony (folder wejściowy); Execute Command dalej zablokowany
+      - NODES_EXCLUDE=["n8n-nodes-base.executeCommand"]
+      # Węzły Code mogą przenosić pliki (fs) i sprawdzać tokeny klientów (crypto);
+      # kod workflow sam pilnuje, by nie zapisywać poza /home/node/praca
+      - NODE_FUNCTION_ALLOW_BUILTIN=fs,path,crypto
+      - N8N_RUNNERS_ENABLED=true
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_PERSONALIZATION_ENABLED=false
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # dostęp do Ollamy: http://host.docker.internal:11434
+    volumes:
+      - n8n:/home/node/.n8n                   # workflowy, credentials (zaszyfrowane)
+      - ../BACKUP2:/home/node/praca           # folder roboczy: wejscie/, wyniki/, ...
+      # Agenci klientów (n8n/klienci.py): lista zaufanych IP tylko do odczytu,
+      # wydane tokeny (same skróty SHA-256) i dziennik próśb – zapis przez workflow rejestracji
+      - ./sekrety/n8n/zaufane:/home/node/zaufane:ro
+      - ./sekrety/n8n/klienci:/home/node/klienci
+      # Dziennik zdarzeń (kto, skąd, jaki plik, z jakim wynikiem) – przegląd: python3 n8n/dziennik.py
+      - ./logs/n8n:/home/node/logi
+      # Opublikowane wersje agenta (klient/publikuj.py) – n8n tylko je wydaje, nie może zmienić
+      - ./dystrybucja:/home/node/dystrybucja:ro
+    networks:
+      - default       # internet: Microsoft 365, pobieranie aktualizacji obrazu
+      - wewnetrzna    # serwis OCR
+
+  # OCR dla skanów (PDF bez warstwy tekstowej). Bez portów i bez internetu – widzi go tylko n8n.
+  ocr:
+    build: ./ocr
+    image: ai-dokumenty-ocr:1
+    container_name: ocr
+    restart: unless-stopped
+    read_only: true               # system plików tylko do odczytu…
+    tmpfs:
+      - /tmp                      # …poza katalogiem na strony renderowane do OCR
+    networks:
+      - wewnetrzna
+
+# Caddy (HTTPS dla LAN) działa poza Dockerem, bezpośrednio na macOS – patrz caddy/Caddyfile.
+# Powód: Docker/OrbStack podmienia adres IP klienta na 192.168.97.1, a rejestracja agentów
+# rozpoznaje zaufane komputery po prawdziwym IP.
+
+volumes:
+  n8n:
+
+networks:
+  wewnetrzna:
+    internal: true                # brak wyjścia do internetu

@@ -1,0 +1,43 @@
+# Jedyne wejście z sieci LAN. Caddy działa bezpośrednio na macOS (nie w Dockerze),
+# bo Docker/OrbStack podmienia adres IP klienta – a rejestracja agentów opiera się na prawdziwym IP.
+# n8n słucha tylko na 127.0.0.1, więc z innych komputerów dostęp jest wyłącznie przez HTTPS.
+#
+# Uruchamiany przez launchd: caddy/pl.ai-dokumenty.caddy.plist
+# Przeładowanie po zmianie:  narzedzia/caddy reload --config caddy/Caddyfile
+#
+# Certyfikat wystawia lokalne CA Caddy (tls internal), klucz CA: sekrety/caddy-dane/.
+# Certyfikat główny dla klientów: certyfikat/caddy-root.crt (odcisk SHA-1 140B9D17…3F92).
+{
+	# Połączenia po samym IP nie wysyłają nazwy serwera (SNI) – wskazujemy certyfikat wprost
+	default_sni 192.168.1.109
+	# Nie dodawaj CA do pęku kluczy macOS automatycznie (robi to administrator świadomie)
+	skip_install_trust
+}
+
+# Dziennik połączeń: kto (IP), kiedy, dokąd, z jakim wynikiem – logs/caddy-dostep.log
+# Token klienta jest wycinany z zapisu. Przegląd: python3 n8n/dziennik.py --polaczenia
+(dziennik_polaczen) {
+	log {
+		output file "/Users/smiley/LLAMA SERVER/ai-dokumenty/logs/caddy-dostep.log" {
+			roll_size 10MiB
+			roll_keep 10
+		}
+		format filter {
+			wrap json
+			fields {
+				request>headers>X-Klient-Token delete
+			}
+		}
+	}
+}
+
+# n8n – edytor i webhooki agentów (jedyna usługa dostępna z sieci)
+https://192.168.1.109:8443 {
+	tls internal
+	import dziennik_polaczen
+	# Adres IP klienta widziany przez serwer (diagnostyka rejestracji agentów)
+	handle /moje-ip {
+		respond "{client_ip}"
+	}
+	reverse_proxy 127.0.0.1:5678
+}
